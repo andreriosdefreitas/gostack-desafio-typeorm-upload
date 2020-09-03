@@ -1,8 +1,10 @@
 import csvParse from 'csv-parse';
 import fs from 'fs';
 import path from 'path';
+
 import Transaction from '../models/Transaction';
 import CreateTransactionService from './CreateTransactionService';
+import uploadConfig from '../config/upload';
 
 interface Request {
   fileName: string;
@@ -17,7 +19,8 @@ interface Line {
 
 class ImportTransactionsService {
   async execute({ fileName }: Request): Promise<Transaction[]> {
-    const csvFilePath = path.resolve(__dirname, 'import_template.csv');
+    const filePath = path.join(uploadConfig.directory, fileName);
+    const csvFilePath = path.resolve(filePath);
 
     const readCSVStream = fs.createReadStream(csvFilePath);
 
@@ -28,10 +31,15 @@ class ImportTransactionsService {
     });
 
     const parseCSV = readCSVStream.pipe(parseStream);
-    const transactions: Line[] = [];
+    const lines: Line[] = [];
 
     parseCSV.on('data', line => {
-      transactions.push(line);
+      lines.push({
+        title: line[0],
+        type: line[1],
+        value: line[2],
+        category: line[3],
+      });
     });
 
     await new Promise(resolve => {
@@ -39,23 +47,30 @@ class ImportTransactionsService {
     });
 
     const createTransactionService = new CreateTransactionService();
-
-    const getTransactions = async (): Promise<Transaction[]> => {
-      return Promise.all(
-        transactions.map(trx =>
-          createTransactionService.execute({
-            title: trx.title,
-            type: trx.type,
-            value: trx.value,
-            category: trx.category,
-          }),
-        ),
-      );
-    };
-
     const savedTransactions: Transaction[] = [];
 
-    getTransactions().then(trx => trx.map(t => savedTransactions.push(t)));
+    for (let i = 0; i < lines.length; i++) {
+      const { category, title, type, value } = lines[i];
+      const transaction = await createTransactionService.execute({
+        title,
+        type: type as 'income' | 'outcome',
+        value,
+        category,
+      });
+      savedTransactions.push(transaction);
+    }
+
+    // lines.forEach(
+    //   line =>
+    //     createTransactionService
+    //       .execute({
+    //         title: line.title,
+    //         type: line.type,
+    //         value: line.value,
+    //         category: line.category,
+    //       })
+    //       .then(trx => savedTransactions.push(trx)).catch,
+    // );
 
     return savedTransactions;
   }
